@@ -8,17 +8,18 @@
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
 
-module load anaconda3/2023.03
-module load cuda/11.8
+module load anaconda3
+module load cuda/11.2.67
 conda activate nndet
 
-export det_data=$HOME/scratch/nndet_data
-export det_models=$HOME/scratch/nndet_models
+export det_data=/scratch/$USER/Data/Ultrasound/nnDet
+export det_models=/scratch/$USER/Models/nnDet
 export OMP_NUM_THREADS=1
+export det_num_threads=6
 
 mkdir -p $det_models logs
 
-cd $HOME/Detection
+cd /scratch/$USER/Projects/Detection
 
 # Step 1: Preprocessing
 echo "=== Preprocessing ==="

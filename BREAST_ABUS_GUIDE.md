@@ -57,55 +57,101 @@ cd Detection
 
 ## Environment Setup
 
-### Option A: Conda (recommended)
+> **Important**: nnDetection requires **PyTorch 1.x** (not 2.0+). PyTorch 2.0
+> removed `torch._six` and other internals that nnDetection depends on.
+
+### Step 1: Request an interactive GPU node (for compilation)
+
+Building nnDetection compiles C++/CUDA extensions, which needs a GPU. Either
+request an interactive session or run the install inside a SLURM job:
 
 ```bash
-# Load modules
-module load anaconda3/2023.03
+# Interactive session with GPU
+srun --partition=nvidia --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=2:00:00 --pty bash
+```
 
-# Create environment
-conda create -n nndet python=3.9 -y
+### Step 2: Load modules
+
+```bash
+module load anaconda3
+module load cuda/11.2.67
+```
+
+### Step 3: Create conda environment and install
+
+```bash
+# Create env with Python 3.8 (as specified in nnDetection README)
+conda create -n nndet python=3.8 -y
 conda activate nndet
 
-# Install PyTorch with CUDA (check available CUDA version with `module avail cuda`)
-module load cuda/11.8
-pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
+# Install GCC toolchain (required for C++/CUDA extension compilation)
+conda install gxx_linux-64==9.3.0 -y
 
-# Install nnDetection
-cd ~/Detection
+# Set compilers to conda-provided versions
+export CXX=$CONDA_PREFIX/bin/x86_64-conda_cos6-linux-gnu-c++
+export CC=$CONDA_PREFIX/bin/x86_64-conda_cos6-linux-gnu-cc
+
+# Install PyTorch 1.11 + CUDA 11.3 (compatible with system CUDA 11.2)
+conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit=11.3 -c pytorch -y
+
+# Clone and install nnDetection
+cd /scratch/$USER/Projects
+git clone https://github.com/Autzoko/Detection.git
+cd Detection
+
 pip install -r requirements.txt
 pip install hydra-core --upgrade --pre
 pip install git+https://github.com/mibaumgartner/pytorch_model_summary.git
-FORCE_CUDA=1 pip install -v -e .
 
-# Install additional dependency for data preparation
+# Build with CUDA extensions (GPU must be available)
+pip install -v -e .
+
+# Extra dependencies for data preparation
 pip install openpyxl scikit-learn
 ```
 
-### Option B: Singularity (from Docker)
+### Step 4: Set environment variables
+
+Add these to your `~/.bashrc` so they persist across sessions:
 
 ```bash
-# Build Singularity image from Docker (run on a compute node with internet)
-module load singularity
-singularity build nndet.sif docker://nvcr.io/nvidia/pytorch:21.11-py3
+cat >> ~/.bashrc << 'EOF'
+# nnDetection environment
+export det_data=/scratch/$USER/Data/Ultrasound/nnDet
+export det_models=/scratch/$USER/Models/nnDet
+export OMP_NUM_THREADS=1
+export det_num_threads=6
+export det_verbose=1
+EOF
 
-# Then inside a SLURM job:
-singularity exec --nv nndet.sif bash -c "
-  cd /path/to/Detection
-  pip install -r requirements.txt
-  FORCE_CUDA=1 pip install -v -e .
-"
+source ~/.bashrc
+mkdir -p $det_data $det_models
 ```
 
-### Verify Installation
+### Step 5: Verify installation
 
 ```bash
 conda activate nndet
-export det_data=~/scratch/nndet_data
-export det_models=~/scratch/nndet_models
-mkdir -p $det_data $det_models
-nndet_env  # should print env info without errors
+
+# Check CUDA extension compilation
+python -c "import torch; import nndet._C; import nndet; print('OK')"
+
+# Check environment paths
+nndet_env
 ```
+
+If the `import nndet._C` step fails, the CUDA extensions did not compile.
+Make sure you ran `pip install -v -e .` on a GPU node (not a login node).
+
+### Troubleshooting installation
+
+| Problem | Fix |
+|---------|-----|
+| `No module named 'torch._six'` | You installed PyTorch 2.0+. Downgrade: `conda install pytorch==1.11.0 torchvision==0.12.0 cudatoolkit=11.3 -c pytorch` |
+| `nvcc not found` during build | `module load cuda/11.2.67` before running `pip install -v -e .` |
+| `nndet._C` import fails | Rebuild on a GPU node: `pip install -v -e .` (not login node) |
+| GCC version errors | Make sure `conda install gxx_linux-64==9.3.0` and the `CC`/`CXX` exports are set |
+| `SimpleITK` version conflict | `pip install 'SimpleITK<2.1.0'` |
 
 ---
 
@@ -215,17 +261,18 @@ Create or use the provided `scripts/slurm_train.sh`:
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
 
-module load anaconda3/2023.03
-module load cuda/11.8
+module load anaconda3
+module load cuda/11.2.67
 conda activate nndet
 
-export det_data=$HOME/scratch/nndet_data
-export det_models=$HOME/scratch/nndet_models
+export det_data=/scratch/$USER/Data/Ultrasound/nnDet
+export det_models=/scratch/$USER/Models/nnDet
 export OMP_NUM_THREADS=1
+export det_num_threads=6
 
 mkdir -p $det_models logs
 
-cd $HOME/Detection
+cd /scratch/$USER/Projects/Detection
 
 # Step 1: Preprocessing
 echo "=== Preprocessing ==="
@@ -239,7 +286,7 @@ nndet_train 100 --fold 0
 ### Submit the job
 
 ```bash
-cd ~/Detection
+cd /scratch/$USER/Projects/Detection
 mkdir -p logs
 sbatch scripts/slurm_train.sh
 ```
@@ -273,15 +320,15 @@ Create or use the provided `scripts/slurm_eval.sh`:
 #SBATCH --mem=64G
 #SBATCH --time=4:00:00
 
-module load anaconda3/2023.03
-module load cuda/11.8
+module load anaconda3
+module load cuda/11.2.67
 conda activate nndet
 
-export det_data=$HOME/scratch/nndet_data
-export det_models=$HOME/scratch/nndet_models
+export det_data=/scratch/$USER/Data/Ultrasound/nnDet
+export det_models=/scratch/$USER/Models/nnDet
 export OMP_NUM_THREADS=1
 
-cd $HOME/Detection
+cd /scratch/$USER/Projects/Detection
 
 # Find the model name from the training output
 MODEL="RetinaUNetV001_D3V001_3d"
