@@ -7,8 +7,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=90:00:00
 
-module load anaconda3
-conda activate nndet
+conda activate /scratch/$USER/envs/nndet
 
 # ---- Paths ----
 ABUS_SRC=/scratch/$USER/Data/Ultrasound/ABUS
