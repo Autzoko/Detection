@@ -8,8 +8,11 @@
 #SBATCH --mem=196G
 #SBATCH --time=90:00:00
 
-module load anaconda3
-conda activate nndet
+module purge
+module load cuda/11.8.0
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate /scratch/$USER/envs/nndet
 
 # ---- Paths ----
 ABUS_SRC=/scratch/$USER/Data/Ultrasound/ABUS
