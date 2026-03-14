@@ -557,7 +557,7 @@ def main():
     dataset_meta = {
         "task": TASK_NAME,
         "name": "Breast ABUS Lesion Detection",
-        "target_class": None,
+        "target_class": 0,
         "test_labels": True,
         "labels": {"0": "Lesion"},
         "modalities": {"0": "US"},

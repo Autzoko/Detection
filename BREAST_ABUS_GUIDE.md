@@ -84,13 +84,6 @@ module load cuda/11.2.67
 conda create -n nndet python=3.8 -y
 conda activate nndet
 
-# Install GCC toolchain (required for C++/CUDA extension compilation)
-conda install gxx_linux-64==9.3.0 -y
-
-# Set compilers to conda-provided versions
-export CXX=$CONDA_PREFIX/bin/x86_64-conda_cos6-linux-gnu-c++
-export CC=$CONDA_PREFIX/bin/x86_64-conda_cos6-linux-gnu-cc
-
 # Install PyTorch 1.11 + CUDA 11.3 (compatible with system CUDA 11.2)
 conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit=11.3 -c pytorch -y
 
@@ -104,7 +97,10 @@ pip install hydra-core --upgrade --pre
 pip install git+https://github.com/mibaumgartner/pytorch_model_summary.git
 
 # Build with CUDA extensions (GPU must be available)
-pip install -v -e .
+# - CC=gcc CXX=g++ : use system compiler (conda's gxx_linux-64 has issues on Jubail)
+# - FORCE_CUDA=1   : force CUDA kernel compilation even if nvcc detection is flaky
+# - TORCH_CUDA_ARCH_LIST="8.0" : A100 GPU architecture (adjust if using different GPU)
+CC=gcc CXX=g++ FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="8.0" pip install -v -e .
 
 # Extra dependencies for data preparation
 pip install openpyxl scikit-learn
@@ -149,8 +145,10 @@ Make sure you ran `pip install -v -e .` on a GPU node (not a login node).
 |---------|-----|
 | `No module named 'torch._six'` | You installed PyTorch 2.0+. Downgrade: `conda install pytorch==1.11.0 torchvision==0.12.0 cudatoolkit=11.3 -c pytorch` |
 | `nvcc not found` during build | `module load cuda/11.2.67` before running `pip install -v -e .` |
-| `nndet._C` import fails | Rebuild on a GPU node: `pip install -v -e .` (not login node) |
-| GCC version errors | Make sure `conda install gxx_linux-64==9.3.0` and the `CC`/`CXX` exports are set |
+| `nndet._C` import fails / `nms_cuda` undefined symbol | CUDA kernels weren't compiled. Rebuild: `CC=gcc CXX=g++ FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="8.0" pip install -v -e .` |
+| `cannot execute 'cc1plus'` | Conda's GCC toolchain is broken. Use system compiler: `CC=gcc CXX=g++` |
+| `crypt.h: No such file or directory` | `conda install libxcrypt` |
+| `undefined symbol: _ZN3c104impl8GPUTrace` | Stale build artifacts. `rm -rf build/ nndet/_C*.so` then rebuild |
 | `SimpleITK` version conflict | `pip install 'SimpleITK<2.1.0'` |
 
 ---

@@ -1,0 +1,16 @@
+# ABUS Lesion Detection Dataset Configuration for YOLOv8
+# Generated for breast ABUS 2D slice detection
+
+# Dataset root directory (update this path for your environment)
+path: /Volumes/Lang/Research/Data/3D Ultrasound/yolo_dataset
+
+# Train/val splits (relative to path)
+train: images/train
+val: images/val
+
+# Number of classes
+nc: 1
+
+# Class names
+names:
+  0: lesion

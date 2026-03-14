@@ -1,0 +1,79 @@
+# 3D Patch Classifier for nnDetection FP Reduction
+# All paths and hyperparameters in one place
+
+paths:
+  # nnDetection prediction pkl files (from inference on held-out set)
+  predictions_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/test_predictions"
+  # NIfTI volumes corresponding to predictions
+  images_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/imagesTs"
+  # GT instance segmentation masks
+  labels_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/labelsTs"
+  # Where to save extracted patches and labels
+  dataset_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/patch_classifier_dataset"
+  # Where to save trained model checkpoints
+  checkpoint_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/patch_classifier_checkpoints"
+  # Where to save inference results
+  output_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/patch_classifier_output"
+
+dataset:
+  # Train on all cases; small val split only for early stopping / threshold tuning
+  val_fraction: 0.15
+  seed: 42
+  # IoU threshold for matching predictions to GT
+  iou_match_threshold: 0.1
+  # Patch extraction
+  patch_size: [64, 64, 64]  # resize target after cropping
+  padding_fraction: 0.5  # 50% padding on each side of bbox
+  # Normalization: clip to [p_low, p_high] percentile of parent volume
+  percentile_low: 1.0
+  percentile_high: 99.0
+  # Minimum prediction score to consider (filter obvious noise)
+  min_pred_score: 0.05
+  # Sample ratio: TP : FP_predictions : random_negatives
+  # If TP=N, keep 2N FP predictions and N random negatives
+  fp_ratio: 2.0
+  random_neg_ratio: 1.0
+  random_neg_per_volume: 5  # random negative patches sampled per volume
+  # Oversampling: repeat TP samples to balance if needed
+  oversample_tp: true
+
+model:
+  # 3D ResBlock CNN
+  in_channels: 1
+  base_channels: 32  # channels: 32 -> 64 -> 128
+  num_blocks: 3
+  fc_hidden: 128
+  dropout: 0.3
+
+training:
+  epochs: 100
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  warmup_epochs: 5
+  early_stopping_patience: 20
+  # Positive class weight: auto-computed from TP:FP ratio, or set manually
+  pos_weight: "auto"
+  # Augmentation (training only)
+  augmentation:
+    flip_prob: 0.5  # per-axis flip probability
+    rotation_degrees: 15
+    intensity_jitter_prob: 0.3
+    intensity_jitter_range: 0.1
+
+inference:
+  # Group candidates with IoU > this into duplicate clusters
+  duplicate_iou_threshold: 0.3
+  # Confidence thresholds to sweep for PR curve
+  threshold_range: [0.1, 0.9]
+  threshold_step: 0.05
+  # Default operating threshold (tuned on val set)
+  operating_threshold: 0.5
+
+evaluation:
+  # FROC FP rates to report sensitivity at
+  froc_fp_rates: [0.125, 0.25, 0.5, 1, 2, 4, 8]
+  # IoU thresholds for matching in evaluation
+  eval_iou_thresholds: [0.1, 0.2, 0.3, 0.5]
