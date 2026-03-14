@@ -64,7 +64,7 @@ class PatchDataset(Dataset):
             "label": label_tensor,
             "name": name,
             "case_id": sample["case_id"],
-            "pred_score": sample["pred_score"],
+            "pred_score": sample.get("pred_score", 0.0),
         }
 
     def _augment(self, patch):

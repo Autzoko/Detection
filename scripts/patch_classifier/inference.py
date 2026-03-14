@@ -211,7 +211,7 @@ def process_case(model, volume, pred_boxes, pred_scores, cfg, device):
     v_high = np.percentile(volume, p_high)
 
     # Filter by minimum prediction score
-    min_score = ds_cfg.get("min_pred_score", 0.05)
+    min_score = cfg["inference"].get("min_pred_score", 0.05)
     mask = pred_scores >= min_score
     pred_boxes = pred_boxes[mask]
     pred_scores = pred_scores[mask]
@@ -268,7 +268,7 @@ def tune_threshold(all_results, all_gt_boxes, cfg):
     t_step = inf_cfg["threshold_step"]
 
     thresholds = np.arange(t_min, t_max + t_step, t_step)
-    iou_thresh = cfg["dataset"]["iou_match_threshold"]
+    iou_thresh = cfg["inference"]["iou_match_threshold"]
 
     curves = []
     for t in thresholds:
@@ -358,9 +358,9 @@ def main():
     print(f"Model loaded (best F1={checkpoint.get('best_f1', 'N/A')})")
 
     # Find cases
-    pred_dir = Path(paths["predictions_dir"])
-    images_dir = Path(paths["images_dir"])
-    labels_dir = Path(paths["labels_dir"])
+    pred_dir = Path(paths["test_predictions_dir"])
+    images_dir = Path(paths["test_images_dir"])
+    labels_dir = Path(paths["test_labels_dir"])
     output_dir = Path(paths["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 

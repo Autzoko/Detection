@@ -215,11 +215,11 @@ def main():
     cfg = load_config(args.config)
     paths = cfg["paths"]
     eval_cfg = cfg["evaluation"]
-    iou_match = cfg["dataset"]["iou_match_threshold"]
+    iou_match = cfg["inference"]["iou_match_threshold"]
     threshold = args.threshold or cfg["inference"]["operating_threshold"]
 
-    pred_dir = Path(paths["predictions_dir"])
-    labels_dir = Path(paths["labels_dir"])
+    pred_dir = Path(paths["test_predictions_dir"])
+    labels_dir = Path(paths["test_labels_dir"])
     output_dir = Path(paths["output_dir"])
     dataset_dir = Path(paths["dataset_dir"])
 

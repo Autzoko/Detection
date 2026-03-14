@@ -2,12 +2,13 @@
 # All paths and hyperparameters in one place
 
 paths:
-  # nnDetection prediction pkl files (from inference on held-out set)
-  predictions_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/test_predictions"
-  # NIfTI volumes corresponding to predictions
-  images_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/imagesTs"
-  # GT instance segmentation masks
-  labels_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/labelsTs"
+  # nnDetection training data (used to build classifier dataset)
+  train_images_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/imagesTr"
+  train_labels_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/labelsTr"
+  # nnDetection test data + predictions (used for inference/evaluation)
+  test_predictions_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/test_predictions"
+  test_images_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/imagesTs"
+  test_labels_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/Duying/raw_splitted/labelsTs"
   # Where to save extracted patches and labels
   dataset_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/patch_classifier_dataset"
   # Where to save trained model checkpoints
@@ -16,25 +17,20 @@ paths:
   output_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/patch_classifier_output"
 
 dataset:
-  # Train on all cases; small val split only for early stopping / threshold tuning
+  # Val split from training volumes (for early stopping only; all volumes used for training)
   val_fraction: 0.15
   seed: 42
-  # IoU threshold for matching predictions to GT
-  iou_match_threshold: 0.1
   # Patch extraction
   patch_size: [64, 64, 64]  # resize target after cropping
   padding_fraction: 0.5  # 50% padding on each side of bbox
   # Normalization: clip to [p_low, p_high] percentile of parent volume
   percentile_low: 1.0
   percentile_high: 99.0
-  # Minimum prediction score to consider (filter obvious noise)
-  min_pred_score: 0.05
-  # Sample ratio: TP : FP_predictions : random_negatives
-  # If TP=N, keep 2N FP predictions and N random negatives
-  fp_ratio: 2.0
-  random_neg_ratio: 1.0
-  random_neg_per_volume: 5  # random negative patches sampled per volume
-  # Oversampling: repeat TP samples to balance if needed
+  # Number of random negative patches per volume
+  random_neg_per_volume: 10
+  # Jittered copies of each GT box (augmented positives)
+  jittered_pos_per_gt: 3
+  # Oversampling: repeat positive samples to balance if needed
   oversample_tp: true
 
 model:
@@ -54,7 +50,7 @@ training:
   scheduler: "cosine"
   warmup_epochs: 5
   early_stopping_patience: 20
-  # Positive class weight: auto-computed from TP:FP ratio, or set manually
+  # Positive class weight: auto-computed from TP:neg ratio, or set manually
   pos_weight: "auto"
   # Augmentation (training only)
   augmentation:
@@ -64,6 +60,10 @@ training:
     intensity_jitter_range: 0.1
 
 inference:
+  # nnDetection prediction score threshold (pre-filter)
+  min_pred_score: 0.05
+  # IoU threshold for matching predictions to GT
+  iou_match_threshold: 0.1
   # Group candidates with IoU > this into duplicate clusters
   duplicate_iou_threshold: 0.3
   # Confidence thresholds to sweep for PR curve
