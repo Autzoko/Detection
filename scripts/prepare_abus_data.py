@@ -30,6 +30,7 @@ Output: nnDetection Task format
 Classes: 0 = Benign, 1 = Malignant
 """
 
+import argparse
 import csv
 import json
 import os
@@ -40,10 +41,10 @@ import SimpleITK as sitk
 
 
 # ============================================================
-# Config
+# Config (defaults, overridable via CLI)
 # ============================================================
-ABUS_ROOT = Path("/Volumes/Autzoko/Dataset/Ultrasound/ABUS/data")
-OUTPUT_ROOT = Path("/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/ABUS")
+DEFAULT_ABUS_ROOT = "/Volumes/Autzoko/Dataset/Ultrasound/ABUS/data"
+DEFAULT_OUTPUT_ROOT = "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/ABUS"
 TASK_NAME = "Task200_ABUS"
 
 # Class mapping: M=malignant=1, B=benign=0
@@ -135,6 +136,16 @@ def convert_case(case, out_case_id, images_dir, labels_dir):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Prepare ABUS data for nnDetection")
+    parser.add_argument("--abus_root", type=str, default=DEFAULT_ABUS_ROOT,
+                        help="Path to ABUS data root (contains Train/Validation/Test)")
+    parser.add_argument("--output_root", type=str, default=DEFAULT_OUTPUT_ROOT,
+                        help="Output root for nnDetection task")
+    args = parser.parse_args()
+
+    ABUS_ROOT = Path(args.abus_root)
+    OUTPUT_ROOT = Path(args.output_root)
+
     task_dir = OUTPUT_ROOT / TASK_NAME
     raw_dir = task_dir / "raw_splitted"
     images_tr = raw_dir / "imagesTr"
