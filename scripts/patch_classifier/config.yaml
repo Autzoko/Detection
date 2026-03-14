@@ -72,6 +72,19 @@ inference:
   # Default operating threshold (tuned on val set)
   operating_threshold: 0.5
 
+postprocessing:
+  # Step 1: Anatomy mask filtering
+  anatomy_margin_mm: 10.0  # dilation margin in mm
+  # Step 2: Center distance clustering
+  cluster_distance_thresholds_mm: [30, 50, 70]
+  # Step 3: Score threshold sweep
+  sweep_range: [0.1, 0.9]
+  sweep_step: 0.05
+  # Volume spacing (z, y, x) in mm
+  spacing: [1.0, 3.0, 1.0]
+  # Output directory for postprocessed predictions
+  output_dir: "/Volumes/Lang/Research/Data/3D Ultrasound/nnDet/postprocessed_pipeline"
+
 evaluation:
   # FROC FP rates to report sensitivity at
   froc_fp_rates: [0.125, 0.25, 0.5, 1, 2, 4, 8]
