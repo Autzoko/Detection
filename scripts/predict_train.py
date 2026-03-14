@@ -106,6 +106,19 @@ def main():
             print(f"\nnndet_predict exited with code {result.returncode}")
             sys.exit(result.returncode)
 
+        # Move predictions to a separate directory
+        src_pred_dir = training_dir / "test_predictions"
+        dst_pred_dir = training_dir / "train_predictions"
+        if src_pred_dir.exists():
+            if dst_pred_dir.exists():
+                # Merge into existing train_predictions
+                for f in src_pred_dir.iterdir():
+                    shutil.move(str(f), str(dst_pred_dir / f.name))
+                src_pred_dir.rmdir()
+            else:
+                src_pred_dir.rename(dst_pred_dir)
+            print(f"\nPredictions saved to: {dst_pred_dir}")
+
     finally:
         # Restore original splits.pkl
         shutil.move(str(backup_path), str(splits_path))
