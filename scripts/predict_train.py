@@ -64,11 +64,11 @@ def main():
         print(f"Using {len(case_ids)} specified cases")
     else:
         if args.split == "train":
-            case_ids = sorted(splits[0]["train"])
+            case_ids = sorted(list(splits[0]["train"]))
         elif args.split == "val":
-            case_ids = sorted(splits[0]["val"])
+            case_ids = sorted(list(splits[0]["val"]))
         else:  # all
-            case_ids = sorted(splits[0]["train"] + splits[0]["val"])
+            case_ids = sorted(list(splits[0]["train"]) + list(splits[0]["val"]))
 
         if args.num_samples is not None and args.num_samples < len(case_ids):
             random.seed(args.seed)
