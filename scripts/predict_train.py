@@ -105,17 +105,17 @@ def main():
 
         print(f"\nRunning: {' '.join(cmd)}\n")
         result = subprocess.run(cmd)
+        exit_code = result.returncode
 
-        if result.returncode != 0:
-            print(f"\nnndet_predict exited with code {result.returncode}")
-            sys.exit(result.returncode)
+        if exit_code != 0:
+            print(f"\nnndet_predict exited with code {exit_code}")
 
-        # Move predictions to a separate directory
+    finally:
+        # Move predictions to a separate directory (even on partial failure)
         src_pred_dir = training_dir / "test_predictions"
         dst_pred_dir = training_dir / "train_predictions"
-        if src_pred_dir.exists():
+        if src_pred_dir.exists() and any(src_pred_dir.iterdir()):
             if dst_pred_dir.exists():
-                # Merge into existing train_predictions
                 for f in src_pred_dir.iterdir():
                     shutil.move(str(f), str(dst_pred_dir / f.name))
                 src_pred_dir.rmdir()
@@ -123,10 +123,12 @@ def main():
                 src_pred_dir.rename(dst_pred_dir)
             print(f"\nPredictions saved to: {dst_pred_dir}")
 
-    finally:
         # Restore original splits.pkl
         shutil.move(str(backup_path), str(splits_path))
         print(f"\nRestored original splits.pkl")
+
+    if exit_code != 0:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
