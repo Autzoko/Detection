@@ -27,6 +27,6 @@ mkdir -p logs
 cd /scratch/$USER/Projects/Detection
 
 echo "=== Predicting on training set ==="
-python scripts/predict_train.py 100 RetinaUNetV001_D3V001_3d --fold 0 --split all
+python scripts/predict_train.py 100 RetinaUNetV001_D3V001_3d --fold 0 --split all -ntta 1
 
 echo "=== Done ==="

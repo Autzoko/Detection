@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--split", type=str, default="train",
                         choices=["train", "val", "all"],
                         help="Which split to predict on (default: train)")
+    parser.add_argument("-ntta", "--num_tta", type=int, default=None,
+                        help="Number of TTA transforms (reduce to save GPU memory)")
     parser.add_argument("-o", "--overwrites", type=str, nargs="+", default=None,
                         help="Overwrites for nndet_predict")
     args = parser.parse_args()
@@ -96,6 +98,8 @@ def main():
             "-f", str(args.fold),
             "--test_split", "--no_preprocess",
         ]
+        if args.num_tta is not None:
+            cmd.extend(["-ntta", str(args.num_tta)])
         if args.overwrites:
             cmd.extend(["-o"] + args.overwrites)
 
