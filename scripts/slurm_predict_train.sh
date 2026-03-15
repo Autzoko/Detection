@@ -5,7 +5,7 @@
 #SBATCH --partition=nvidia
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=192G
 #SBATCH --time=90:00:00
 
 module purge
