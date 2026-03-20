@@ -102,6 +102,11 @@ model_cfg:
     dice_kwargs:
       batch_dice: True
 
+  patch_classifier_kwargs: # patch-level positive/negative classifier to suppress FPs
+    hidden_dim: 128
+    dropout: 0.3
+    loss_weight: 1.0
+
   matcher_kwargs: # keyword arguments passed to matcher
     num_candidates: 4
     center_in_gt: False

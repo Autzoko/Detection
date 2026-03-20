@@ -19,6 +19,7 @@ from nndet.arch.encoder.abstract import EncoderType
 from nndet.arch.decoder.base import DecoderType
 from nndet.arch.heads.segmenter import SegmenterType
 from nndet.arch.heads.comb import HeadType
+from nndet.arch.heads.patch_classifier import PatchClassifier
 from nndet.core.boxes.anchors import AnchorGeneratorType
 
 
@@ -41,6 +42,7 @@ class BaseRetinaNet(AbstractModel):
                  nms_thresh: float = 0.9,
                  # optional
                  segmenter: Optional[SegmenterType] = None,
+                 patch_classifier: Optional[PatchClassifier] = None,
                  ):
         """
         Base Retina(U)Net
@@ -61,6 +63,7 @@ class BaseRetinaNet(AbstractModel):
             remove_small_boxes: remove small bounding boxes
             nms_thresh: non maximum suppression threshold
             segmenter: segmentation module
+            patch_classifier: patch-level binary classifier module
         """
         super().__init__()
         assert dim in [2, 3]
@@ -82,6 +85,7 @@ class BaseRetinaNet(AbstractModel):
         self.nms_thresh = nms_thresh
 
         self.segmenter = segmenter
+        self.patch_classifier = patch_classifier
 
     def train_step(self,
                    images: Tensor,
@@ -130,7 +134,7 @@ class BaseRetinaNet(AbstractModel):
         target_classes: List[Tensor] = targets["target_classes"]
         target_seg: Tensor = targets["target_seg"]
 
-        pred_detection, anchors, pred_seg = self(images)
+        pred_detection, anchors, pred_seg, pred_patch_cls = self(images)
         labels, matched_gt_boxes = self.assign_targets_to_anchors(
             anchors, target_boxes, target_classes)
 
@@ -142,11 +146,15 @@ class BaseRetinaNet(AbstractModel):
         if self.segmenter is not None:
             losses.update(self.segmenter.compute_loss(pred_seg, target_seg))
 
+        if self.patch_classifier is not None:
+            losses.update(self.patch_classifier.compute_loss(pred_patch_cls, target_boxes))
+
         if evaluation:
             prediction = self.postprocess_for_inference(
                 images=images,
                 pred_detection=pred_detection,
                 pred_seg=pred_seg,
+                pred_patch_cls=pred_patch_cls,
                 anchors=anchors,
             )
         else:
@@ -164,6 +172,7 @@ class BaseRetinaNet(AbstractModel):
                                   pred_detection: Dict[str, torch.Tensor],
                                   pred_seg: Dict[str, torch.Tensor],
                                   anchors: List[torch.Tensor],
+                                  pred_patch_cls: Optional[Dict[str, torch.Tensor]] = None,
                                   ) -> Dict[str, Union[List[Tensor], Tensor]]:
         """
         Postprocess predictions for inference
@@ -173,6 +182,7 @@ class BaseRetinaNet(AbstractModel):
             pred_detection: detection predictions
             pred_seg: segmentation predictions
             anchors: anchors
+            pred_patch_cls: patch classification predictions
 
         Returns:
             Dict: post processed predictions
@@ -182,6 +192,7 @@ class BaseRetinaNet(AbstractModel):
                     the class List[[R]]
                 'pred_labels': List[Tensor]: predicted class List[[R]]
                 'pred_seg': Tensor: predicted segmentation [N, C, dims]
+                'pred_patch_cls': Tensor: patch classification probability [N, 1]
         """
         image_shapes = [images.shape[2:]] * images.shape[0]
         boxes, probs, labels = self.postprocess_detections(
@@ -193,6 +204,13 @@ class BaseRetinaNet(AbstractModel):
 
         if self.segmenter is not None:
             prediction["pred_seg"] = self.segmenter.postprocess_for_inference(pred_seg)["pred_seg"]
+
+        if self.patch_classifier is not None and pred_patch_cls is not None:
+            patch_probs = self.patch_classifier.postprocess_for_inference(pred_patch_cls)["pred_patch_cls"]  # [N, 1]
+            prediction["pred_patch_cls"] = patch_probs
+            # Re-weight detection scores: suppress detections from negative patches
+            for i in range(len(prediction["pred_scores"])):
+                prediction["pred_scores"][i] = prediction["pred_scores"][i] * patch_probs[i].squeeze()
         return prediction
 
     def forward(self,
@@ -223,7 +241,8 @@ class BaseRetinaNet(AbstractModel):
         anchors = self.anchor_generator(inp, feature_maps_head)
 
         pred_seg = self.segmenter(features_maps_all) if self.segmenter is not None else None
-        return pred_detection, anchors, pred_seg
+        pred_patch_cls = self.patch_classifier(feature_maps_head) if self.patch_classifier is not None else None
+        return pred_detection, anchors, pred_seg, pred_patch_cls
 
     @torch.no_grad()
     def assign_targets_to_anchors(self,
@@ -404,11 +423,12 @@ class BaseRetinaNet(AbstractModel):
                 'pred_labels': List[Tensor]: predicted class List[[R]]
                 'pred_seg': Tensor: predicted segmentation [N, C, dims]
         """
-        pred_detection, anchors, pred_seg = self(images)
+        pred_detection, anchors, pred_seg, pred_patch_cls = self(images)
         prediction = self.postprocess_for_inference(
             images=images,
             pred_detection=pred_detection,
             pred_seg=pred_seg,
+            pred_patch_cls=pred_patch_cls,
             anchors=anchors,
         )
         return prediction

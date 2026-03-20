@@ -51,6 +51,7 @@ from nndet.arch.heads.classifier import ClassifierType, CEClassifier
 from nndet.arch.heads.regressor import RegressorType, L1Regressor
 from nndet.arch.heads.comb import HeadType, DetectionHeadHNM
 from nndet.arch.heads.segmenter import SegmenterType, DiCESegmenter
+from nndet.arch.heads.patch_classifier import PatchClassifier
 
 from nndet.training.optimizer import get_params_no_wd_on_norm
 from nndet.training.learning_rate import LinearWarmupPolyLR
@@ -432,6 +433,11 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             model_cfg=model_cfg,
             decoder=decoder,
         )
+        patch_classifier = cls._build_patch_classifier(
+            plan_arch=plan_arch,
+            model_cfg=model_cfg,
+            decoder=decoder,
+        )
 
         detections_per_img = plan_arch.get("detections_per_img", 100)
         score_thresh = plan_arch.get("score_thresh", 0)
@@ -457,6 +463,7 @@ class RetinaUNetModule(LightningBaseModuleSWA):
             num_classes=plan_arch["classifier_classes"],
             decoder_levels=plan_arch["decoder_levels"],
             segmenter=segmenter,
+            patch_classifier=patch_classifier,
             # model_max_instances_per_batch_element (in mdt per img, per class; here: per img)
             detections_per_img=detections_per_img,
             score_thresh=score_thresh,
@@ -673,6 +680,38 @@ class RetinaUNetModule(LightningBaseModuleSWA):
         else:
             segmenter = None
         return segmenter
+
+    @classmethod
+    def _build_patch_classifier(
+        cls,
+        plan_arch: dict,
+        model_cfg: dict,
+        decoder: DecoderType,
+    ):
+        """
+        Build patch-level binary classifier head (optional).
+
+        Enabled when model_cfg contains 'patch_classifier_kwargs'.
+
+        Args:
+            plan_arch: architecture settings
+            model_cfg: additional architecture settings
+            decoder: decoder instance
+
+        Returns:
+            PatchClassifier or None
+        """
+        kwargs = model_cfg.get("patch_classifier_kwargs", None)
+        if kwargs is not None:
+            logger.info(f"Building:: patch_classifier {kwargs}")
+            patch_classifier = PatchClassifier(
+                in_channels=decoder.get_channels(),
+                decoder_levels=plan_arch["decoder_levels"],
+                **kwargs,
+            )
+        else:
+            patch_classifier = None
+        return patch_classifier
 
     @staticmethod
     def get_ensembler_cls(key: Hashable, dim: int) -> Callable:
