@@ -114,7 +114,7 @@ class BiRadsClassifier(AbstractHead):
         pos_labels = []
 
         for i, (boxes, classes) in enumerate(zip(target_boxes, target_classes)):
-            if len(boxes) > 0:
+            if len(boxes) > 0 and len(classes) > 0:
                 pos_logits.append(logits[i])
                 # Use the class of the first GT box in this patch
                 pos_labels.append(classes[0].long())

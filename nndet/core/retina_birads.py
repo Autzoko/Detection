@@ -155,6 +155,29 @@ class BiRadsRetinaNet(BaseRetinaNet):
         return losses, prediction
 
     @torch.no_grad()
+    def inference_step(
+        self,
+        images: torch.Tensor,
+        **kwargs,
+    ) -> Dict[str, Union[List[Tensor], Tensor]]:
+        """
+        Perform inference for a batch of images, including BI-RADS predictions.
+
+        Overrides BaseRetinaNet.inference_step to handle the 5-value return
+        from BiRadsRetinaNet.forward().
+        """
+        pred_detection, anchors, pred_seg, pred_patch_cls, pred_birads = self(images)
+        prediction = self.postprocess_for_inference(
+            images=images,
+            pred_detection=pred_detection,
+            pred_seg=pred_seg,
+            pred_patch_cls=pred_patch_cls,
+            pred_birads=pred_birads,
+            anchors=anchors,
+        )
+        return prediction
+
+    @torch.no_grad()
     def postprocess_for_inference(
         self,
         images: torch.Tensor,
