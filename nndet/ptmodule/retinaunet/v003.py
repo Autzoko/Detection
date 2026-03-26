@@ -75,7 +75,11 @@ class RetinaUNetV003(RetinaUNetModule):
                 logger.info(f"V003: Loading pretrained weights from {pretrained_path}")
                 ckpt = torch.load(str(pretrained_path), map_location="cpu")
                 state_dict = ckpt.get("state_dict", ckpt)
-                # Load with strict=False to allow missing birads_classifier keys
+                # Filter out birads_classifier keys to avoid shape mismatch
+                # (architecture may have changed between versions)
+                state_dict = {k: v for k, v in state_dict.items()
+                              if "birads_classifier" not in k}
+                # Load with strict=False to allow missing keys
                 missing, unexpected = self.load_state_dict(state_dict, strict=False)
                 logger.info(
                     f"V003: Loaded pretrained weights. "
