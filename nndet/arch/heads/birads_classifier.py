@@ -1,11 +1,12 @@
 """
 BI-RADS classification head for nnDetection.
 
-Operates on FPN features (like PatchClassifier) but predicts BI-RADS class
-for each detected lesion instead of binary positive/negative.
+Uses RoI-based feature extraction: for each detected/GT box, crops
+multi-scale FPN features at the box location, adaptive-pools to a
+fixed size, then classifies with an MLP.
 
-Designed to be added alongside the existing PatchClassifier without
-modifying existing code.
+This replaces the previous GAP-based approach which pooled over the
+entire patch and lost lesion-specific spatial information.
 """
 
 import torch
@@ -18,13 +19,11 @@ from nndet.arch.heads.comb import AbstractHead
 
 class BiRadsClassifier(AbstractHead):
     """
-    Patch-level BI-RADS classifier that operates on FPN features.
+    RoI-based BI-RADS classifier on FPN features.
 
-    Architecture:
-        FPN features -> Global Average Pooling -> Concat -> MLP -> num_classes logits
-
-    Predicts BI-RADS class (e.g., 2/3/4) for patches that contain lesions.
-    Only computes loss on positive patches (those with GT boxes).
+    Architecture per box:
+        FPN features → crop at box coords → AdaptiveAvgPool3d(roi_size)
+        → concat across FPN levels → MLP → num_classes logits
     """
 
     def __init__(
@@ -32,29 +31,33 @@ class BiRadsClassifier(AbstractHead):
         in_channels: Sequence[int],
         decoder_levels: Sequence[int],
         num_classes: int = 3,
+        roi_size: int = 2,
         hidden_dim: int = 128,
         dropout: float = 0.3,
         loss_weight: float = 1.0,
     ):
         """
         Args:
-            in_channels: number of channels at each FPN level
+            in_channels: channels at each FPN level
             decoder_levels: which decoder levels are used
-            num_classes: number of BI-RADS classes (e.g., 3 for BIRADS 2/3/4)
-            hidden_dim: hidden dimension of MLP
+            num_classes: number of BI-RADS classes (e.g., 3 for 2/3/4)
+            roi_size: spatial size after adaptive pooling per level
+            hidden_dim: MLP hidden dimension
             dropout: dropout rate
-            loss_weight: weight for the classification loss
+            loss_weight: weight for classification loss
         """
         super().__init__()
         self.decoder_levels = decoder_levels
         self.num_classes = num_classes
         self.loss_weight = loss_weight
+        self.roi_size = roi_size
 
-        # Total input features = sum of channels from all FPN levels used
         total_channels = sum(in_channels[i] for i in decoder_levels)
+        self.feature_dim = total_channels * roi_size ** 3
 
+        self.pool = nn.AdaptiveAvgPool3d(roi_size)
         self.classifier = nn.Sequential(
-            nn.Linear(total_channels, hidden_dim),
+            nn.Linear(self.feature_dim, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes),
@@ -62,91 +65,136 @@ class BiRadsClassifier(AbstractHead):
 
         self.loss_fn = nn.CrossEntropyLoss(reduction="mean")
 
+    def _extract_roi_features(
+        self,
+        feature_maps: List[torch.Tensor],
+        boxes: torch.Tensor,
+        input_shape: Sequence[int],
+    ) -> torch.Tensor:
+        """
+        Extract multi-scale RoI features for each box.
+
+        Args:
+            feature_maps: FPN features, each [1, C, *spatial] (single image)
+            boxes: [N, 6] in input coords [min_d0, min_d1, min_d2, max_d0, max_d1, max_d2]
+            input_shape: spatial shape of network input (d0, d1, d2)
+
+        Returns:
+            [N, feature_dim] concatenated RoI features
+        """
+        if len(boxes) == 0:
+            return torch.zeros(0, self.feature_dim, device=feature_maps[0].device)
+
+        all_features = []
+        for box in boxes:
+            level_feats = []
+            for fm in feature_maps:
+                fm_shape = fm.shape[2:]  # spatial dims
+                scales = [float(fs) / float(ins) for fs, ins in zip(fm_shape, input_shape)]
+
+                # Map box to feature map coordinates
+                coords_min = [max(0, int(box[d].item() * scales[d])) for d in range(3)]
+                coords_max = [min(fm_shape[d], int(box[d + 3].item() * scales[d]) + 1) for d in range(3)]
+
+                # Ensure at least 1 voxel per dim
+                for d in range(3):
+                    if coords_max[d] <= coords_min[d]:
+                        coords_min[d] = max(0, coords_min[d] - 1)
+                        coords_max[d] = min(fm_shape[d], coords_min[d] + 1)
+
+                roi = fm[0, :,
+                         coords_min[0]:coords_max[0],
+                         coords_min[1]:coords_max[1],
+                         coords_min[2]:coords_max[2]]
+                pooled = self.pool(roi.unsqueeze(0))  # [1, C, rs, rs, rs]
+                level_feats.append(pooled.flatten())
+
+            all_features.append(torch.cat(level_feats))
+
+        return torch.stack(all_features)
+
     def forward(
         self,
         feature_maps: List[torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+        boxes_per_image: List[torch.Tensor],
+        input_shape: Sequence[int],
+    ) -> Dict[str, List[torch.Tensor]]:
         """
-        Forward pass.
+        Predict BI-RADS class for each detected box.
 
         Args:
-            feature_maps: FPN features at decoder_levels.
-                Each tensor has shape [N, C, *spatial_dims]
+            feature_maps: FPN features [B, C, *spatial]
+            boxes_per_image: list of [N_i, 6] boxes per image in batch
+            input_shape: spatial shape of input
 
         Returns:
-            Dict with 'birads_logits': [N, num_classes] logits
+            Dict with per-image lists:
+                'birads_probs': List[[N_i, num_classes]]
+                'birads_labels': List[[N_i]]
         """
-        pooled = []
-        for fm in feature_maps:
-            dims = list(range(2, fm.ndim))  # spatial dims
-            pooled.append(fm.mean(dim=dims))
+        all_probs = []
+        all_labels = []
 
-        x = torch.cat(pooled, dim=1)  # [N, total_channels]
-        logits = self.classifier(x)   # [N, num_classes]
+        for img_idx, boxes in enumerate(boxes_per_image):
+            device = feature_maps[0].device
+            if len(boxes) == 0:
+                all_probs.append(torch.zeros(0, self.num_classes, device=device))
+                all_labels.append(torch.zeros(0, dtype=torch.long, device=device))
+                continue
 
-        return {"birads_logits": logits}
+            fm_single = [fm[img_idx:img_idx + 1] for fm in feature_maps]
+            features = self._extract_roi_features(fm_single, boxes, input_shape)
+            logits = self.classifier(features)
+            probs = torch.softmax(logits, dim=1)
+
+            all_probs.append(probs)
+            all_labels.append(probs.argmax(dim=1))
+
+        return {"birads_probs": all_probs, "birads_labels": all_labels}
 
     def compute_loss(
         self,
-        pred: Dict[str, torch.Tensor],
+        feature_maps: List[torch.Tensor],
         target_boxes: List[torch.Tensor],
         target_classes: List[torch.Tensor],
+        input_shape: Sequence[int],
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute BI-RADS classification loss on positive patches only.
+        Compute BI-RADS loss using GT boxes for RoI extraction.
 
-        For patches with multiple GT boxes, uses the class of the first box
-        (majority class could be used as an alternative).
+        Each GT box gets its own RoI features and classification target.
 
         Args:
-            pred: predictions with 'birads_logits' [N, num_classes]
-            target_boxes: list of GT boxes per image in batch
-            target_classes: list of GT class labels per image in batch
+            feature_maps: FPN features [B, C, *spatial]
+            target_boxes: list of [N_i, 6] GT boxes per image
+            target_classes: list of [N_i] GT classes per image
+            input_shape: spatial shape of input
 
         Returns:
-            Dict with 'birads_cls' loss (zero if no positive patches)
+            Dict with 'birads_cls' loss
         """
-        logits = pred["birads_logits"]  # [N, num_classes]
-        device = logits.device
+        device = feature_maps[0].device
+        all_features = []
+        all_labels = []
 
-        # Collect logits and labels for positive patches only
-        pos_logits = []
-        pos_labels = []
+        for img_idx, (boxes, classes) in enumerate(zip(target_boxes, target_classes)):
+            if len(boxes) == 0 or len(classes) == 0:
+                continue
+            fm_single = [fm[img_idx:img_idx + 1] for fm in feature_maps]
+            features = self._extract_roi_features(fm_single, boxes, input_shape)
+            all_features.append(features)
+            all_labels.append(classes.long().to(device))
 
-        for i, (boxes, classes) in enumerate(zip(target_boxes, target_classes)):
-            if len(boxes) > 0 and len(classes) > 0:
-                pos_logits.append(logits[i])
-                # Use the class of the first GT box in this patch
-                pos_labels.append(classes[0].long())
-
-        if len(pos_logits) == 0:
-            # No positive patches in this batch, return zero loss
+        if not all_features:
             return {"birads_cls": torch.tensor(0.0, device=device, requires_grad=True)}
 
-        pos_logits = torch.stack(pos_logits)   # [P, num_classes]
-        pos_labels = torch.stack(pos_labels)   # [P]
+        all_features = torch.cat(all_features, dim=0)
+        all_labels = torch.cat(all_labels, dim=0)
 
-        loss = self.loss_weight * self.loss_fn(pos_logits, pos_labels)
+        logits = self.classifier(all_features)
+        loss = self.loss_weight * self.loss_fn(logits, all_labels)
         return {"birads_cls": loss}
 
-    def postprocess_for_inference(
-        self,
-        pred: Dict[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Convert logits to class probabilities and predictions.
-
-        Args:
-            pred: predictions with 'birads_logits'
-
-        Returns:
-            Dict with:
-                'pred_birads_probs': [N, num_classes] softmax probabilities
-                'pred_birads_labels': [N] predicted class indices
-        """
-        probs = torch.softmax(pred["birads_logits"], dim=1)
-        labels = probs.argmax(dim=1)
-        return {
-            "pred_birads_probs": probs,
-            "pred_birads_labels": labels,
-        }
+    def postprocess_for_inference(self, pred):
+        """Backward compatibility stub (not used in RoI mode)."""
+        return pred

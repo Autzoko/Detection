@@ -100,8 +100,9 @@ model_cfg:
     dropout: 0.3
     loss_weight: 1.0
 
-  birads_classifier_kwargs: # NEW: BI-RADS classification head
+  birads_classifier_kwargs: # BI-RADS classification head (RoI-based)
     num_classes: 3       # BIRADS 2/3/4
+    roi_size: 2          # adaptive pool size per FPN level per box
     hidden_dim: 128
     dropout: 0.3
     loss_weight: 1.0

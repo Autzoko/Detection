@@ -491,12 +491,17 @@ class BoxEnsembler(BaseEnsembler):
         if self._birads_cache and boxes.numel() > 0:
             cache_boxes = torch.cat([c["boxes"] for c in self._birads_cache], dim=0)
             cache_scores = torch.cat([c["scores"] for c in self._birads_cache], dim=0)
-            # Expand per-patch birads to per-box: each box in a patch
-            # shares that patch's birads prediction
+            # Birads probs: per-box [N_i, num_classes] or per-patch [num_classes]
             cache_birads = []
             for c in self._birads_cache:
-                n_boxes = c["boxes"].shape[0]
-                cache_birads.append(c["birads_probs"].unsqueeze(0).expand(n_boxes, -1))
+                bp = c["birads_probs"]
+                if bp.dim() == 1:
+                    # Per-patch format (old model): expand to per-box
+                    n_boxes = c["boxes"].shape[0]
+                    cache_birads.append(bp.unsqueeze(0).expand(n_boxes, -1))
+                else:
+                    # Per-box format (RoI model): already aligned
+                    cache_birads.append(bp)
             cache_birads = torch.cat(cache_birads, dim=0)  # [total_cached, num_classes]
 
             # For each final box, find the best matching cached box

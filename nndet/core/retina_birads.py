@@ -4,6 +4,10 @@ Extended RetinaNet with BI-RADS classification head.
 Subclasses BaseRetinaNet to add a BI-RADS classifier alongside
 the existing detection head and PatchClassifier. Does not modify
 the original retina.py.
+
+The BI-RADS classifier uses RoI-based feature extraction:
+  - Training: extracts features at GT box locations
+  - Inference: extracts features at predicted box locations
 """
 
 import torch
@@ -29,9 +33,9 @@ class BiRadsRetinaNet(BaseRetinaNet):
 
     Inherits all detection, segmentation, and patch classification
     functionality from BaseRetinaNet. Adds:
-      - birads_classifier: predicts BI-RADS class from FPN features
-      - birads_cls loss during training
-      - pred_birads_labels / pred_birads_probs during inference
+      - birads_classifier: RoI-based BI-RADS class prediction per box
+      - birads_cls loss during training (using GT boxes)
+      - pred_birads_probs / pred_birads_labels during inference (using pred boxes)
     """
 
     def __init__(
@@ -78,12 +82,13 @@ class BiRadsRetinaNet(BaseRetinaNet):
     ) -> Tuple[Dict[str, torch.Tensor], List[torch.Tensor],
                Dict[str, torch.Tensor],
                Optional[Dict[str, torch.Tensor]],
-               Optional[Dict[str, torch.Tensor]]]:
+               List[torch.Tensor]]:
         """
-        Forward pass with additional BI-RADS predictions.
+        Forward pass. Returns FPN feature maps (instead of birads predictions)
+        so that birads can be computed later with boxes.
 
         Returns:
-            pred_detection, anchors, pred_seg, pred_patch_cls, pred_birads
+            pred_detection, anchors, pred_seg, pred_patch_cls, feature_maps_head
         """
         features_maps_all = self.decoder(self.encoder(inp))
         feature_maps_head = [features_maps_all[i] for i in self.decoder_levels]
@@ -93,9 +98,9 @@ class BiRadsRetinaNet(BaseRetinaNet):
 
         pred_seg = self.segmenter(features_maps_all) if self.segmenter is not None else None
         pred_patch_cls = self.patch_classifier(feature_maps_head) if self.patch_classifier is not None else None
-        pred_birads = self.birads_classifier(feature_maps_head) if self.birads_classifier is not None else None
 
-        return pred_detection, anchors, pred_seg, pred_patch_cls, pred_birads
+        # Return feature maps for RoI-based birads (computed later with boxes)
+        return pred_detection, anchors, pred_seg, pred_patch_cls, feature_maps_head
 
     def train_step(
         self,
@@ -108,17 +113,16 @@ class BiRadsRetinaNet(BaseRetinaNet):
         Training step with BI-RADS classification loss.
 
         The detection head uses binary classes (all foreground = class 0)
-        while the BI-RADS classifier uses the original multi-class labels.
+        while the BI-RADS classifier uses the original multi-class labels
+        with RoI features extracted at GT box locations.
         """
         target_boxes: List[Tensor] = targets["target_boxes"]
         target_classes: List[Tensor] = targets["target_classes"]
         target_seg: Tensor = targets["target_seg"]
 
-        pred_detection, anchors, pred_seg, pred_patch_cls, pred_birads = self(images)
+        pred_detection, anchors, pred_seg, pred_patch_cls, feature_maps_head = self(images)
 
         # For the detection head: map all foreground classes to 0 (binary)
-        # so that BCEClassifier with num_classes=1 works correctly.
-        # Original target_classes has values 0/1/2 (BIRADS 2/3/4).
         binary_classes = [torch.zeros_like(tc) for tc in target_classes]
 
         labels, matched_gt_boxes = self.assign_targets_to_anchors(
@@ -135,10 +139,10 @@ class BiRadsRetinaNet(BaseRetinaNet):
         if self.patch_classifier is not None:
             losses.update(self.patch_classifier.compute_loss(pred_patch_cls, target_boxes))
 
-        # BI-RADS head uses the original multi-class labels
+        # BI-RADS: RoI-based, uses GT boxes for feature extraction
         if self.birads_classifier is not None:
             losses.update(self.birads_classifier.compute_loss(
-                pred_birads, target_boxes, target_classes))
+                feature_maps_head, target_boxes, target_classes, images.shape[2:]))
 
         if evaluation:
             prediction = self.postprocess_for_inference(
@@ -146,7 +150,7 @@ class BiRadsRetinaNet(BaseRetinaNet):
                 pred_detection=pred_detection,
                 pred_seg=pred_seg,
                 pred_patch_cls=pred_patch_cls,
-                pred_birads=pred_birads,
+                feature_maps_head=feature_maps_head,
                 anchors=anchors,
             )
         else:
@@ -161,18 +165,15 @@ class BiRadsRetinaNet(BaseRetinaNet):
         **kwargs,
     ) -> Dict[str, Union[List[Tensor], Tensor]]:
         """
-        Perform inference for a batch of images, including BI-RADS predictions.
-
-        Overrides BaseRetinaNet.inference_step to handle the 5-value return
-        from BiRadsRetinaNet.forward().
+        Inference step: detect boxes then classify each with BI-RADS.
         """
-        pred_detection, anchors, pred_seg, pred_patch_cls, pred_birads = self(images)
+        pred_detection, anchors, pred_seg, pred_patch_cls, feature_maps_head = self(images)
         prediction = self.postprocess_for_inference(
             images=images,
             pred_detection=pred_detection,
             pred_seg=pred_seg,
             pred_patch_cls=pred_patch_cls,
-            pred_birads=pred_birads,
+            feature_maps_head=feature_maps_head,
             anchors=anchors,
         )
         return prediction
@@ -185,12 +186,12 @@ class BiRadsRetinaNet(BaseRetinaNet):
         pred_seg: Dict[str, torch.Tensor],
         anchors: List[torch.Tensor],
         pred_patch_cls: Optional[Dict[str, torch.Tensor]] = None,
-        pred_birads: Optional[Dict[str, torch.Tensor]] = None,
+        feature_maps_head: Optional[List[torch.Tensor]] = None,
     ) -> Dict[str, Union[List[Tensor], Tensor]]:
         """
-        Postprocess with BI-RADS predictions added.
+        Postprocess: first decode detections, then classify each box.
         """
-        # Use parent's postprocess for detection + seg + patch_cls
+        # Parent handles detection + seg + patch_cls
         prediction = super().postprocess_for_inference(
             images=images,
             pred_detection=pred_detection,
@@ -199,10 +200,12 @@ class BiRadsRetinaNet(BaseRetinaNet):
             pred_patch_cls=pred_patch_cls,
         )
 
-        # Add BI-RADS predictions
-        if self.birads_classifier is not None and pred_birads is not None:
-            birads_out = self.birads_classifier.postprocess_for_inference(pred_birads)
-            prediction["pred_birads_probs"] = birads_out["pred_birads_probs"]
-            prediction["pred_birads_labels"] = birads_out["pred_birads_labels"]
+        # Classify each predicted box with BI-RADS
+        if self.birads_classifier is not None and feature_maps_head is not None:
+            pred_boxes = prediction["pred_boxes"]  # List[Tensor [N_i, 6]]
+            birads_out = self.birads_classifier(
+                feature_maps_head, pred_boxes, images.shape[2:])
+            prediction["pred_birads_probs"] = birads_out["birads_probs"]
+            prediction["pred_birads_labels"] = birads_out["birads_labels"]
 
         return prediction
