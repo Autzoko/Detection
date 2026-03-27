@@ -139,10 +139,13 @@ class BiRadsRetinaNet(BaseRetinaNet):
         if self.patch_classifier is not None:
             losses.update(self.patch_classifier.compute_loss(pred_patch_cls, target_boxes))
 
-        # BI-RADS: RoI-based, uses GT boxes for feature extraction
+        # BI-RADS: RoI-based, uses GT boxes for feature extraction.
+        # Detach feature maps so birads gradients don't destabilize the
+        # pretrained backbone — only the birads MLP classifier is updated.
         if self.birads_classifier is not None:
+            detached_fmaps = [fm.detach() for fm in feature_maps_head]
             losses.update(self.birads_classifier.compute_loss(
-                feature_maps_head, target_boxes, target_classes, images.shape[2:]))
+                detached_fmaps, target_boxes, target_classes, images.shape[2:]))
 
         if evaluation:
             prediction = self.postprocess_for_inference(
