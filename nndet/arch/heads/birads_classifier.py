@@ -93,14 +93,16 @@ class BiRadsClassifier(AbstractHead):
                 scales = [float(fs) / float(ins) for fs, ins in zip(fm_shape, input_shape)]
 
                 # Map box to feature map coordinates
-                coords_min = [max(0, int(box[d].item() * scales[d])) for d in range(3)]
-                coords_max = [min(fm_shape[d], int(box[d + 3].item() * scales[d]) + 1) for d in range(3)]
-
-                # Ensure at least 1 voxel per dim
+                coords_min = []
+                coords_max = []
                 for d in range(3):
-                    if coords_max[d] <= coords_min[d]:
-                        coords_min[d] = max(0, coords_min[d] - 1)
-                        coords_max[d] = min(fm_shape[d], coords_min[d] + 1)
+                    lo = int(box[d].item() * scales[d])
+                    hi = int(box[d + 3].item() * scales[d]) + 1
+                    # Clamp to valid range
+                    lo = max(0, min(lo, fm_shape[d] - 1))
+                    hi = max(lo + 1, min(hi, fm_shape[d]))
+                    coords_min.append(lo)
+                    coords_max.append(hi)
 
                 roi = fm[0, :,
                          coords_min[0]:coords_max[0],
@@ -191,8 +193,16 @@ class BiRadsClassifier(AbstractHead):
         all_features = torch.cat(all_features, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
+        # Clamp labels to valid range to prevent NaN from CrossEntropyLoss
+        all_labels = all_labels.clamp(0, self.num_classes - 1)
+
         logits = self.classifier(all_features)
         loss = self.loss_weight * self.loss_fn(logits, all_labels)
+
+        # Guard against NaN loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            return {"birads_cls": torch.tensor(0.0, device=device, requires_grad=True)}
+
         return {"birads_cls": loss}
 
     def postprocess_for_inference(self, pred):
