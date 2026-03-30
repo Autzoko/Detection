@@ -3,7 +3,7 @@
 #SBATCH --output=logs/birads_predict_%j.out
 #SBATCH --error=logs/birads_predict_%j.err
 #SBATCH --partition=nvidia
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
@@ -21,6 +21,9 @@ export OMP_NUM_THREADS=1
 
 # Fix CUDA stub library issue
 export LD_LIBRARY_PATH=/lib64:/share/apps/NYUAD5/cuda/11.8.0/lib:$(echo $LD_LIBRARY_PATH | sed 's|/share/apps/NYUAD5/cuda/11.8.0/lib/stubs:||g; s|/share/apps/NYUAD5/cuda/11.8.0/lib:||g')
+
+# Disable cuDNN for H100 compatibility with PyTorch 1.11
+export TORCH_CUDNN_V8_API_DISABLED=1
 
 mkdir -p logs
 
