@@ -3,7 +3,7 @@
 #SBATCH --output=logs/birads_predict_%j.out
 #SBATCH --error=logs/birads_predict_%j.err
 #SBATCH --partition=nvidia
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
