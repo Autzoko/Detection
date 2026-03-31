@@ -22,17 +22,13 @@ export OMP_NUM_THREADS=1
 # Fix CUDA stub library issue
 export LD_LIBRARY_PATH=/lib64:/share/apps/NYUAD5/cuda/11.8.0/lib:$(echo $LD_LIBRARY_PATH | sed 's|/share/apps/NYUAD5/cuda/11.8.0/lib/stubs:||g; s|/share/apps/NYUAD5/cuda/11.8.0/lib:||g')
 
-
 mkdir -p logs
 
 cd /scratch/$USER/Projects/Detection
 git pull
 
-# ---- Clean old checkpoints (GAP-based, incompatible) ----
-MODEL_DIR=/scratch/$USER/Models/nnDet/Task101_BreastBIRADS/RetinaUNetV003_D3V001_3d/fold0
-rm -f "$MODEL_DIR"/model_best-v*.ckpt
-echo "Kept checkpoints:"
-ls -lt "$MODEL_DIR"/*.ckpt
+# ---- Model path (V001 with 3-class detection) ----
+MODEL_DIR=/scratch/$USER/Models/nnDet/Task101_BreastBIRADS/RetinaUNetV001_D3V001_3d/fold0
 
 # ---- Generate plan_inference.pkl ----
 if [ ! -f "$MODEL_DIR/plan_inference.pkl" ]; then
@@ -47,7 +43,7 @@ print('Done')
 fi
 
 # ---- Run inference ----
-echo "=== BI-RADS Prediction ==="
-nndet_predict Task101_BreastBIRADS RetinaUNetV003_D3V001_3d -f 0 -ntta 1
+echo "=== BI-RADS Prediction (V001, 3-class) ==="
+nndet_predict Task101_BreastBIRADS RetinaUNetV001_D3V001_3d -f 0 -ntta 1
 
 echo "=== Done ==="

@@ -30,7 +30,7 @@ from nndet.inference.detection import batched_nms_model, batched_nms_ensemble, \
     batched_wbc_ensemble, wbc_nms_no_label_ensemble
 from nndet.inference.ensembler.base import BaseEnsembler, OverlapMap
 from nndet.inference.restore import restore_detection
-from nndet.core.boxes import box_center, box_iou, clip_boxes_to_image, remove_small_boxes
+from nndet.core.boxes import box_center, clip_boxes_to_image, remove_small_boxes
 from nndet.utils.tensor import cat, to_device, to_dtype
 
 
@@ -71,7 +71,6 @@ class BoxEnsembler(BaseEnsembler):
         self.label_key = label_key
         self.box_key = box_key
         self.overlap_map = OverlapMap(tuple(self.properties["shape"]))
-        self._birads_cache = []  # cache for BI-RADS predictions: (boxes, scores, probs)
 
     @classmethod
     def from_case(cls,
@@ -392,19 +391,6 @@ class BoxEnsembler(BaseEnsembler):
         for crop in crops_reshaped:
             self.overlap_map.add_overlap(crop)
 
-        # Cache BI-RADS predictions for post-hoc matching
-        if "pred_birads_probs" in result:
-            birads_probs_batch = result["pred_birads_probs"]
-            for img_idx, img_boxes in enumerate(boxes):
-                if img_boxes.numel() == 0:
-                    continue
-                bp = birads_probs_batch[img_idx].detach().cpu()
-                self._birads_cache.append({
-                    "boxes": img_boxes.detach().cpu(),
-                    "scores": scores[img_idx].detach().cpu(),
-                    "birads_probs": bp,
-                })
-
     @staticmethod
     def _get_box_in_tile_weight(box_centers: Tensor,
                                 tile_size: Sequence[int],
@@ -476,7 +462,7 @@ class BoxEnsembler(BaseEnsembler):
         if restore:
             boxes = self.restore_prediction(boxes)
 
-        result = {
+        return {
             "pred_boxes": boxes,
             "pred_scores": probs,
             "pred_labels": labels,
@@ -486,54 +472,6 @@ class BoxEnsembler(BaseEnsembler):
             "itk_spacing": self.properties["itk_spacing"],
             "itk_direction": self.properties["itk_direction"],
             }
-
-        # Match BI-RADS predictions to final boxes via IoU
-        if self._birads_cache and boxes.numel() > 0:
-            cache_boxes = torch.cat([c["boxes"] for c in self._birads_cache], dim=0)
-            cache_scores = torch.cat([c["scores"] for c in self._birads_cache], dim=0)
-            # Birads probs: per-box [N_i, num_classes] or per-patch [num_classes]
-            cache_birads = []
-            for c in self._birads_cache:
-                bp = c["birads_probs"]
-                if bp.dim() == 1:
-                    # Per-patch format (old model): expand to per-box
-                    n_boxes = c["boxes"].shape[0]
-                    cache_birads.append(bp.unsqueeze(0).expand(n_boxes, -1))
-                else:
-                    # Per-box format (RoI model): already aligned
-                    cache_birads.append(bp)
-            cache_birads = torch.cat(cache_birads, dim=0)  # [total_cached, num_classes]
-
-            # For each final box, find the best matching cached box
-            # Use pre-restore boxes for matching if restore was applied
-            match_boxes = boxes.cpu()
-            iou_matrix = box_iou(match_boxes, cache_boxes)  # [N_final, N_cached]
-
-            # For each final box, among cached boxes with IoU > 0,
-            # pick the one with highest detection score
-            birads_probs_list = []
-            for i in range(len(match_boxes)):
-                ious = iou_matrix[i]
-                mask = ious > 0
-                if mask.any():
-                    # Among overlapping cached boxes, take highest-scoring one
-                    masked_scores = cache_scores.clone()
-                    masked_scores[~mask] = -1
-                    best_idx = masked_scores.argmax()
-                    birads_probs_list.append(cache_birads[best_idx])
-                else:
-                    # No overlap: take nearest by center distance
-                    final_center = (match_boxes[i, :2] + match_boxes[i, 2:4]) / 2
-                    cache_centers = (cache_boxes[:, :2] + cache_boxes[:, 2:4]) / 2
-                    dists = (cache_centers - final_center).norm(dim=1)
-                    best_idx = dists.argmin()
-                    birads_probs_list.append(cache_birads[best_idx])
-
-            birads_probs_out = torch.stack(birads_probs_list)
-            result["pred_birads_probs"] = birads_probs_out
-            result["pred_birads_labels"] = birads_probs_out.argmax(dim=1)
-
-        return result
 
     def process_model(self, name: Hashable) ->\
             Tuple[Tensor, Tensor, Tensor, Tensor]:
@@ -1093,19 +1031,6 @@ class BoxEnsemblerSelective(BoxEnsembler):
         self.model_results[self.model_current]["weights"].extend(weights)
         # self.model_results[self.model_current]["crops"].extend(
         #     list(zip(*batch["crop"])))
-
-        # Cache BI-RADS predictions for post-hoc matching
-        if "pred_birads_probs" in result:
-            birads_probs_batch = result["pred_birads_probs"]
-            for img_idx, img_boxes in enumerate(boxes):
-                if img_boxes.numel() == 0:
-                    continue
-                bp = birads_probs_batch[img_idx].detach().cpu()
-                self._birads_cache.append({
-                    "boxes": img_boxes.detach().cpu(),
-                    "scores": scores[img_idx].detach().cpu(),
-                    "birads_probs": bp,
-                })
 
     @staticmethod
     def _get_box_in_tile_weight(box_centers: Tensor,

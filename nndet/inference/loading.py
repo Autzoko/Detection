@@ -139,19 +139,7 @@ def load_all_models(
             plan=plan,
             )
         state_dict = torch.load(path, map_location="cpu")["state_dict"]
-        # Filter out keys with shape mismatch (e.g. birads_classifier
-        # architecture changed between training runs)
-        model_sd = model.state_dict()
-        filtered_sd = {}
-        skipped = []
-        for k, v in state_dict.items():
-            if k in model_sd and v.shape != model_sd[k].shape:
-                skipped.append(k)
-            else:
-                filtered_sd[k] = v
-        if skipped:
-            logger.info(f"Skipped {len(skipped)} keys with shape mismatch: {skipped}")
-        t = model.load_state_dict(filtered_sd, strict=False)
+        t = model.load_state_dict(state_dict)
         logger.info(f"Loaded {path} with {t}")
         model.float()
         model.eval()
